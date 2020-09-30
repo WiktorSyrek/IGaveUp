@@ -1,0 +1,90 @@
+# Starter pipeline
+# Start with a minimal pipeline that you can customize to build and deploy your code.
+# Add steps that build, run tests, deploy, and more:
+# https://aka.ms/yaml
+
+trigger:
+- master
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+steps:
+- script: echo Hello, world!
+  displayName: 'Run a one-line script'
+
+- script: |
+    echo Add other tasks to build, test, and deploy your project.
+    echo See https://aka.ms/yaml
+  displayName: 'Run a multi-line script'
+- task: VSTest@2
+  inputs:
+    testSelector: 'testAssemblies'
+    testAssemblyVer2: |
+      **\*test*.dll
+      !**\*TestAdapter.dll
+      !**\obj\**
+    searchFolder: '$(System.DefaultWorkingDirectory)'
+- task: PowerShell@2
+  inputs:
+    targetType: 'inline'
+    script: |
+      Param([string]$projectDir)
+      
+      $coverageExe = "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Team Tools\Dynamic Code Coverage Tools\CodeCoverage.exe"
+      
+      function makeFilePathsRelative {
+          param([string]$filePath, [string]$find,[string]$replace)
+      
+          $tempFilePath = "$env:TEMP\"+([System.GUID]::NewGuid().ToString())
+          
+          (Get-Content -Path $filePath) -replace [regex]::escape($find), [regex]::escape($replace) | Add-Content -Path $tempFilePath
+      
+          Remove-Item -Path $filePath
+          Move-Item -Path $tempFilePath -Destination $filePath    
+      }
+      
+      function prepareTrx {
+      Param([string]$projectDir)
+      
+          Set-Location $projectDir
+          $trxReports = get-childitem -path "." -Recurse -Filter *.trx
+          $count = $trxReports.Length; #bug
+      
+          $projectDir = (Get-Item -Path ".\").FullName + '\'
+          $id = 0
+          foreach($trxReport in $trxReports)
+          {    
+              #makeFilePathsRelative $outFile $projectDir ""
+              $outFile = $projectDir+"TestResults"+($id++)+".trx"
+              Copy-Item -Recurse -Path $trxReport.FullName -Destination $outfile
+      
+              makeFilePathsRelative $outFile '/href=\"([^\"]*)/g' 'href=Coverage"'+ $id +".xml"
+          }
+      
+          $coverageReports = get-childitem -path "." -Recurse -Filter *.coverage
+      
+          $id = 0
+          foreach($coverageReport in $coverageReports)
+          {    
+              #makeFilePathsRelative $outFile $projectDir ""
+              $outFile = $projectDir+"Coverage"+($id++)+".coveragexml"
+      
+              Write-Host $coverageExe "analyze" "/output:"+$outFile $coverageReport.FullName;
+      
+              $params = @(
+                  "analyze"
+                  "/output:"+$outFile
+                  $coverageReport.FullName
+              )
+      
+              &$coverageExe  $params
+          }
+      
+      }
+- task: SonarQubePrepare@4
+  inputs:
+    SonarQube: 'PG SonarQube'
+    scannerMode: 'MSBuild'
+    projectKey: 'TIM - MACE'
+    projectName: 'TIM - MACE'
